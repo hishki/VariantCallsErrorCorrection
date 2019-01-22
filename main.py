@@ -132,24 +132,24 @@ def greedy_algorithm(incorrect_variants, merged_edges):
         for u in merged_edges[v]:
             good_edges += merged_edges[v][u][0]
             bad_edges += merged_edges[v][u][1]
-            variant_set.add((good_edges - bad_edges, v))
+        variant_set.add((good_edges - bad_edges, v))
         variant_score[v] = good_edges - bad_edges
 
     while len(variant_set) > 0:
         v = min(variant_set)
         variant_set.remove(v)
-        if v[0] < 0:
+        print(v, len(variant_set))
+        if v[0] < -100:
             incorrect_variants.add(v[1])
             for u in merged_edges[v[1]]:
                 variant_set.remove((variant_score[u], u))
-                variant_score[u] -= merged_edges[v[1]][u][0] - merged_edges[v[1]][u][1]
+                variant_score[u] -= merged_edges[u][v[1]][0] - merged_edges[u][v[1]][1]
                 variant_set.add((variant_score[u], u))
-                if v[1] in merged_edges[u]:
-                    merged_edges[u].pop(v[1])
+                merged_edges[u].pop(v[1])
     return incorrect_variants
 
 
-def accuracy(vcf_file, all_variants_pos, incorrect_variants_pos):
+def accuracy(vcf_file, all_variants_pos, incorrect_variants_pos, merged_edges, edges, all_variants_pos_to_idx):
     vcf_pos = set()
     with open(vcf_file,'r') as infile:
         for line in infile:
@@ -165,6 +165,13 @@ def accuracy(vcf_file, all_variants_pos, incorrect_variants_pos):
     vcf_pos = set([x for x in vcf_pos if x <= max(incorrect_variants_pos)])
     incorrect_intersect = incorrect_variants_pos.intersection(vcf_pos)
     all_variants_intersect = all_variants_pos.intersection(vcf_pos)
+    for pos in incorrect_intersect:
+        v = all_variants_pos_to_idx[pos]
+        good_edges, bad_edges = 0, 0
+        for u in merged_edges[v]:
+            good_edges += merged_edges[v][u][0]
+            bad_edges += merged_edges[v][u][1]
+        print(v, good_edges, bad_edges)
     print(len(incorrect_intersect), len(all_variants_intersect), len(vcf_pos), len(incorrect_variants_pos), len(all_variants_pos))
 
 
@@ -173,21 +180,22 @@ variant_count = get_variant_count(flist)
 incorrect_variants, v_set = vertex_filter(variant_count)
 with open('variant_count.txt', 'w') as file:
     file.write(str(variant_count))
-# incorrect_variants = set()
+incorrect_variants = set()
 edges = build_edges(flist, v_set)
 merged_edges = merge_edge(edges)
 # edges = filtering_edges(flist)
 with open('edges.txt', 'w') as file:
     file.write(str(edges))
 
-incorrect_variants = greedy_algorithm(incorrect_variants, merged_edges)
+incorrect_variants = greedy_algorithm(incorrect_variants, merged_edges.copy())
 incorrect_variants_pos = set()
 for idx in incorrect_variants:
     incorrect_variants_pos.add(vcf_dict[idx])
 with open('incorrect_variants_pos.txt', 'w') as file:
     file.write(str(incorrect_variants_pos))
 all_variants_pos = set([x for x in vcf_dict.values() if x <= max(incorrect_variants_pos)])
-accuracy('data/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf', all_variants_pos, incorrect_variants_pos)
+all_variants_pos_to_idx = {pos: idx for idx, pos in vcf_dict.items()}
+accuracy('data/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf', all_variants_pos, incorrect_variants_pos, merged_edges, edges, all_variants_pos_to_idx)
 #
 # def parse_vcf_phase(vcf_file, CHROM, indels = False):
 #
