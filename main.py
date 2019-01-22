@@ -21,7 +21,7 @@ def read_fragment_matrix(frag_matrix, vcf_file):
         cnt_quality = {}
         for line in fm:
             cnt += 1
-            if cnt > 50 * 1000:
+            if cnt > 10 * 1000:
                 break
             if len(line) < 2:
                 continue
@@ -93,26 +93,64 @@ def get_variant_count(flist):
 
 def vertex_filter(variant_count):
     filtered_v = set()
+    incorrect_variants = set()
     for i in range(len(variant_count)):
         if variant_count[i][0] > 2 and variant_count[i][1] > 2:
             filtered_v.add(i)
-    return filtered_v
+        elif variant_count[i][0] > 2:
+            incorrect_variants.add(i)
+    return incorrect_variants, filtered_v
 
 
-def edge_filter(edges):
-    pass
+# def make_haplotype(variant_count, edges):
+#     haplotype = [{}, {}]
+#     for v in edges:
+#         state
+#         for u in edges[v]:
+#             if u >= v:
+#                 break
+#             if haplotype[0][u]
+#             if edges[v][u]
+
+def merge_edge(edges):
+    merged_edges = {}
+    for v in edges:
+        merged_edges[v] = {}
+        for u in edges[v]:
+            t = edges[v][u]
+            t.sort()
+            merged_edges[v][u] = (t[0]+t[1], t[2]+t[3])
+    return merged_edges
+
+
+def greedy_algorithm(incorrect_variants, merged_edges):
+    for v in edges:
+        good_edges, bad_edges = 0, 0
+        for u in edges[v]:
+            good_edges += merged_edges[v][u][0]
+            bad_edges += merged_edges[v][u][1]
+        if good_edges < 1.5*bad_edges:
+            incorrect_variants.add(v)
+            for u in edges[v]:
+                merged_edges[u][v] = (0, 0)
+    return incorrect_variants
 
 
 flist = read_fragment_matrix('data/fragments.txt', 'data/out.vcf')
 variant_count = get_variant_count(flist)
-v_set = vertex_filter(variant_count)
+incorrect_variants, v_set = vertex_filter(variant_count)
 with open('variant_count.txt', 'w') as file:
     file.write(str(variant_count))
 
 edges = build_edges(flist, v_set)
+merged_edges = merge_edge(edges)
 # edges = filtering_edges(flist)
 with open('edges.txt', 'w') as file:
     file.write(str(edges))
+
+incorrect_variants = greedy_algorithm(incorrect_variants, merged_edges)
+with open('incorrect_variants.txt', 'w') as file:
+    file.write(str(incorrect_variants))
 #
 # def parse_vcf_phase(vcf_file, CHROM, indels = False):
 #
