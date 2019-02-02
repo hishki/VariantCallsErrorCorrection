@@ -56,6 +56,37 @@ def read_fragment_matrix(frag_matrix, vcf_file):
     return vcf_dict, flist
 
 
+def keep_bed_intersect(vcf_dict, flist, intersect_file):
+    intersect_pos = set()
+    snp_ix = 0
+    intersect_dict = dict()
+    reverse_intersect_dict = dict()
+    with open(intersect_file, 'r') as infile:
+        for line in infile:
+            if line[:1] == '#':
+                continue
+            el = line.strip().split('\t')
+            if len(el) < 5:
+                continue
+            genomic_pos = int(el[1])-1
+            intersect_dict[snp_ix] = genomic_pos
+            reverse_intersect_dict[genomic_pos] = snp_ix
+            intersect_pos.add(genomic_pos)
+            snp_ix += 1
+
+    new_flist = []
+    for fragment in flist:
+        new_fragment = []
+        for snp in fragment:
+            if vcf_dict[snp[0]] in intersect_pos:
+                snp = (reverse_intersect_dict[vcf_dict[snp[0]]], snp[1])
+                new_fragment.append(snp)
+        if len(new_fragment) > 0:
+            new_flist.append(new_fragment)
+
+    return intersect_dict, new_flist
+
+
 def build_edges(flist, v_set):
     edges = {}
     cnt = 0
@@ -139,13 +170,15 @@ def greedy_algorithm(incorrect_variants, merged_edges):
         v = min(variant_set)
         variant_set.remove(v)
         print(v, len(variant_set))
-        if v[0] < -100:
+        if v[0] < -2000:
             incorrect_variants.add(v[1])
             for u in merged_edges[v[1]]:
                 variant_set.remove((variant_score[u], u))
                 variant_score[u] -= merged_edges[u][v[1]][0] - merged_edges[u][v[1]][1]
                 variant_set.add((variant_score[u], u))
                 merged_edges[u].pop(v[1])
+        else:
+            break
     return incorrect_variants
 
 
@@ -158,7 +191,7 @@ def accuracy(vcf_file, all_variants_pos, incorrect_variants_pos, merged_edges, e
             el = line.strip().split('\t')
             if len(el) < 5:
                 continue
-            if el[0] != '20':
+            if el[0] != 'chr20':
                 continue
             genomic_pos = int(el[1])-1
             vcf_pos.add(genomic_pos)
@@ -176,6 +209,7 @@ def accuracy(vcf_file, all_variants_pos, incorrect_variants_pos, merged_edges, e
 
 
 vcf_dict, flist = read_fragment_matrix('data/fragments.txt', 'data/out.vcf')
+vcf_dict, flist = keep_bed_intersect(vcf_dict, flist, 'data/intersect.vcf')
 variant_count = get_variant_count(flist)
 incorrect_variants, v_set = vertex_filter(variant_count)
 with open('variant_count.txt', 'w') as file:
@@ -195,7 +229,7 @@ with open('incorrect_variants_pos.txt', 'w') as file:
     file.write(str(incorrect_variants_pos))
 all_variants_pos = set([x for x in vcf_dict.values() if x <= max(incorrect_variants_pos)])
 all_variants_pos_to_idx = {pos: idx for idx, pos in vcf_dict.items()}
-accuracy('data/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf', all_variants_pos, incorrect_variants_pos, merged_edges, edges, all_variants_pos_to_idx)
+accuracy('data/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf', all_variants_pos, incorrect_variants_pos, merged_edges, edges, all_variants_pos_to_idx)
 #
 # def parse_vcf_phase(vcf_file, CHROM, indels = False):
 #
