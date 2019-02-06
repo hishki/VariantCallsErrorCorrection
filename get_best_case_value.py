@@ -1,11 +1,11 @@
 from utility import *
 
-MAX_NUM_READS = 8 * 1000
+MAX_NUM_READS = 100 * 1000
 INTERSECT_FILENAME = 'data/intersect.vcf'
 ALL_VARIANTS_FILENAME = 'data/4.0.final_genotypes.vcf'
 LONGSHOT_OUTPUT_FILENAME = 'data/out.vcf'
 FRAGMENT_FILENAME = 'data/fragments.txt'
-EDGES_LIMIT = 50
+EDGES_LIMIT = 1000
 GROUND_TRUTH_FILENAME = 'data/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf'
 MIN_HETERO_READS = 2
 

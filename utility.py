@@ -104,17 +104,16 @@ def keep_output_intersect(vcf_dict, flist, out_file):
             snp_ix += 1
 
     new_flist = []
+    res_vcf_dict = {}
     for fragment in flist:
         new_fragment = []
         for snp in fragment:
-            if snp[0] in vcf_dict.keys():
-                if vcf_dict[snp[0]] in intersect_pos:
-                    new_fragment.append(snp)
-                else:
-                    vcf_dict.pop(snp[0])
+            if vcf_dict[snp[0]] in intersect_pos:
+                new_fragment.append(snp)
+                res_vcf_dict[snp[0]] = vcf_dict[snp[0]]
         if len(new_fragment) > 0:
             new_flist.append(new_fragment)
-    return vcf_dict, new_flist
+    return res_vcf_dict, new_flist
 
 
 def build_edges(flist, v_set, edges_limit):
@@ -144,23 +143,24 @@ def build_edges(flist, v_set, edges_limit):
 
 def get_variant_count(flist):
     # print(flist[-1][-1][0])
-    variant_count = [[0, 0] for _ in range(flist[-1][-1][0]+1000)]
+    variant_count = {}
     for fragment in flist:
-        for i in range(len(fragment)):
-            # print(fragment[i][0], int(fragment[i][1]))
-            variant_count[fragment[i][0]][int(fragment[i][1])] += 1
+        for snp in fragment:
+            if snp[0] not in variant_count.keys():
+                variant_count[snp[0]] = [0, 0]
+            variant_count[snp[0]][int(snp[1])] += 1
     return variant_count
 
 
 def vertex_filter(variant_count, min_hetero_reads):
     filtered_v = set()
     homo_variants = [set(), set()]
-    for i in range(len(variant_count)):
-        if variant_count[i][0] > min_hetero_reads and variant_count[i][1] > min_hetero_reads:
-            filtered_v.add(i)
+    for snp_idx, snp_count in variant_count.items():
+        if snp_count[0] > min_hetero_reads and snp_count[1] > min_hetero_reads:
+            filtered_v.add(snp_idx)
         else:
-            is_variant = variant_count[i][1] > variant_count[i][0]
-            homo_variants[is_variant].add(i)
+            is_variant = snp_count[1] > snp_count[0]
+            homo_variants[is_variant].add(snp_idx)
     return homo_variants, filtered_v
 
 
@@ -202,6 +202,31 @@ def greedy_algorithm(incorrect_variants, merged_edges):
             break
     return incorrect_variants
 
+def local_search(incorrect_variants, merged_edges):
+    variant_set = set()
+    variant_score = {}
+    for v in merged_edges:
+        good_edges, bad_edges = 0, 0
+        for u in merged_edges[v]:
+            good_edges += merged_edges[v][u][0]
+            bad_edges += merged_edges[v][u][1]
+        variant_set.add((good_edges - bad_edges, v))
+        variant_score[v] = good_edges - bad_edges
+
+    while len(variant_set) > 0:
+        v = min(variant_set)
+        variant_set.remove(v)
+        # print(v, len(variant_set))
+        if v[0] < -200:
+            incorrect_variants.add(v[1])
+            for u in merged_edges[v[1]]:
+                variant_set.remove((variant_score[u], u))
+                variant_score[u] -= merged_edges[u][v[1]][0] - merged_edges[u][v[1]][1]
+                variant_set.add((variant_score[u], u))
+                merged_edges[u].pop(v[1])
+        else:
+            break
+    return incorrect_variants
 
 def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_variants, edges):
     all_variants_pos = set([x for x in vcf_dict.values() if x <= max(incorrect_variants_pos)])
