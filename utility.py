@@ -1,4 +1,6 @@
 import numpy as np
+from sortedcontainers import SortedList
+
 
 def read_fragment_matrix(frag_matrix, vcf_file, max_num_reads):
 
@@ -172,7 +174,7 @@ def merge_edge(edges):
             t = edges[v][u]
             # t.sort()
             # merged_edges[v][u] = (t[0]+t[1], t[2]+t[3])
-            merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], t[0]*t[1] + t[2]*t[3])
+            merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3])//2)
     return merged_edges
 
 
@@ -202,31 +204,67 @@ def greedy_algorithm(incorrect_variants, merged_edges):
             break
     return incorrect_variants
 
-def local_search(incorrect_variants, merged_edges):
-    variant_set = set()
-    variant_score = {}
-    for v in merged_edges:
-        good_edges, bad_edges = 0, 0
-        for u in merged_edges[v]:
-            good_edges += merged_edges[v][u][0]
-            bad_edges += merged_edges[v][u][1]
-        variant_set.add((good_edges - bad_edges, v))
-        variant_score[v] = good_edges - bad_edges
 
-    while len(variant_set) > 0:
-        v = min(variant_set)
-        variant_set.remove(v)
-        # print(v, len(variant_set))
-        if v[0] < -200:
-            incorrect_variants.add(v[1])
-            for u in merged_edges[v[1]]:
-                variant_set.remove((variant_score[u], u))
-                variant_score[u] -= merged_edges[u][v[1]][0] - merged_edges[u][v[1]][1]
-                variant_set.add((variant_score[u], u))
-                merged_edges[u].pop(v[1])
-        else:
+def local_search(merged_edges, threshold):
+    group = {}  # [idx] = 0 -> error, 1 -> True
+    moves_score = {}  # [idx] = -move_score
+    sorted_list = SortedList()  # (move_score, idx)
+    objective_value = {0: 0, 1: 0, 'middle': 0}
+    # initialized
+    for v in merged_edges:
+        edge_score = 0
+        for u in merged_edges[v]:
+            edge_score += merged_edges[v][u][0] - merged_edges[v][u][1]
+        group[v] = int(edge_score > 0)
+
+    for v in merged_edges:
+        move_score = 0
+        for u in merged_edges[v]:
+            edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
+            if group[v] == group[u]:
+                if merged_edges[u][v][0] - merged_edges[u][v][1] != edge_value:
+                    print('kossher')
+                objective_value[group[v]] += edge_value
+            else:
+                objective_value['middle'] += edge_value
+            if group[v] == 0 and group[u] == 1:
+                move_score += 2 * edge_value
+            elif group[v] == 1 and group[u] == 1:
+                move_score -= 2 * edge_value
+        moves_score[v] = move_score
+        sorted_list.add((move_score, v))
+
+    objective_value[0] /= 2
+    objective_value[1] /= 2
+    objective_value['middle'] /= 2
+
+    # local_search
+    while True:
+        print(objective_value, 'sum :{s}'.format(s=-objective_value[0] + objective_value[1] - objective_value['middle']))
+        move_score, v = sorted_list.pop()
+        if move_score < threshold:
             break
-    return incorrect_variants
+        group[v] = 1-group[v]
+        moves_score[v] = -move_score
+        sorted_list.add((moves_score[v], v))
+        for u in merged_edges[v]:
+            edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
+            sorted_list.remove((moves_score[u], u))
+            if group[v] == group[u]:
+                objective_value[group[v]] += edge_value
+                objective_value['middle'] -= edge_value
+                moves_score[u] -= 2 * edge_value
+            else:
+                objective_value['middle'] += edge_value
+                objective_value[group[u]] -= edge_value
+                moves_score[u] += 2 * edge_value
+            sorted_list.add((moves_score[u], u))
+
+    variants = [set(), set()]
+    for idx, is_true in group.items():
+        variants[is_true].add(idx)
+    return variants[0], variants[1]
+
 
 def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_variants, edges):
     all_variants_pos = set([x for x in vcf_dict.values() if x <= max(incorrect_variants_pos)])
