@@ -174,11 +174,12 @@ def merge_edge(edges):
             t = edges[v][u]
             # t.sort()
             # merged_edges[v][u] = (t[0]+t[1], t[2]+t[3])
-            merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3])//2)
+            merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3]))
     return merged_edges
 
 
-def greedy_algorithm(incorrect_variants, merged_edges):
+def greedy_algorithm(merged_edges):
+    incorrect_variants = set()
     variant_set = set()
     variant_score = {}
     for v in merged_edges:
@@ -193,7 +194,7 @@ def greedy_algorithm(incorrect_variants, merged_edges):
         v = min(variant_set)
         variant_set.remove(v)
         # print(v, len(variant_set))
-        if v[0] < -200:
+        if v[0] < -100:
             incorrect_variants.add(v[1])
             for u in merged_edges[v[1]]:
                 variant_set.remove((variant_score[u], u))
@@ -202,28 +203,85 @@ def greedy_algorithm(incorrect_variants, merged_edges):
                 merged_edges[u].pop(v[1])
         else:
             break
+
     return incorrect_variants
 
 
-def local_search(merged_edges, threshold):
+def local_search(merged_edges, threshold, iteration_num, random_change, init_false_group_set):
     group = {}  # [idx] = 0 -> error, 1 -> True
+    group_size = [0, 0]
     moves_score = {}  # [idx] = -move_score
-    sorted_list = SortedList()  # (move_score, idx)
-    objective_value = {0: 0, 1: 0, 'middle': 0}
     # initialized
     for v in merged_edges:
         edge_score = 0
         for u in merged_edges[v]:
             edge_score += merged_edges[v][u][0] - merged_edges[v][u][1]
-        group[v] = int(edge_score > 0)
+        if init_false_group_set is not None:
+            group[v] = v not in init_false_group_set
+        else:
+            group[v] = int(edge_score > 0)
+            # group[v] = np.random.randint(2)
+        group_size[group[v]] += 1
 
+    for i in range(iteration_num):
+        objective_value = {0: 0, 1: 0, 'middle': 0}
+        sorted_list = SortedList()  # (move_score, idx)
+        for v in merged_edges:
+            if np.random.randint(random_change) == 0:
+                group_size[group[v]] -= 1
+                group[v] = 1-group[v]
+                group_size[group[v]] += 1
+        for v in merged_edges:
+            move_score = 0
+            for u in merged_edges[v]:
+                edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
+                if group[v] == group[u]:
+                    objective_value[group[v]] += edge_value
+                else:
+                    objective_value['middle'] += edge_value
+                if group[v] == 0 and group[u] == 1:
+                    move_score += 2 * edge_value
+                elif group[v] == 1 and group[u] == 1:
+                    move_score -= 2 * edge_value
+            moves_score[v] = move_score
+            sorted_list.add((move_score, v))
+
+        objective_value[0] /= 2
+        objective_value[1] /= 2
+        objective_value['middle'] /= 2
+
+        # local_search
+        while True:
+            print(objective_value, 'sum :{s}'.format(s=-objective_value[0] + objective_value[1] - objective_value['middle']), group_size)
+            move_score, v = sorted_list.pop(-1)
+            print(move_score, v)
+            if move_score < threshold:
+                break
+            group_size[group[v]] -= 1
+            group[v] = 1-group[v]
+            group_size[group[v]] += 1
+            moves_score[v] = -move_score
+            sorted_list.add((moves_score[v], v))
+            for u in merged_edges[v]:
+                edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
+                sorted_list.remove((moves_score[u], u))
+                if group[v] == group[u]:
+                    objective_value[group[v]] += edge_value
+                    objective_value['middle'] -= edge_value
+                    moves_score[u] -= 2 * edge_value
+                else:
+                    objective_value['middle'] += edge_value
+                    objective_value[group[u]] -= edge_value
+                    moves_score[u] += 2 * edge_value
+                sorted_list.add((moves_score[u], u))
+
+    objective_value = {0: 0, 1: 0, 'middle': 0}
+    sorted_list = SortedList()  # (move_score, idx)
     for v in merged_edges:
         move_score = 0
         for u in merged_edges[v]:
             edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
             if group[v] == group[u]:
-                if merged_edges[u][v][0] - merged_edges[u][v][1] != edge_value:
-                    print('kossher')
                 objective_value[group[v]] += edge_value
             else:
                 objective_value['middle'] += edge_value
@@ -234,31 +292,11 @@ def local_search(merged_edges, threshold):
         moves_score[v] = move_score
         sorted_list.add((move_score, v))
 
+    print(sorted_list.pop(-1))
     objective_value[0] /= 2
     objective_value[1] /= 2
     objective_value['middle'] /= 2
-
-    # local_search
-    while True:
-        print(objective_value, 'sum :{s}'.format(s=-objective_value[0] + objective_value[1] - objective_value['middle']))
-        move_score, v = sorted_list.pop()
-        if move_score < threshold:
-            break
-        group[v] = 1-group[v]
-        moves_score[v] = -move_score
-        sorted_list.add((moves_score[v], v))
-        for u in merged_edges[v]:
-            edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
-            sorted_list.remove((moves_score[u], u))
-            if group[v] == group[u]:
-                objective_value[group[v]] += edge_value
-                objective_value['middle'] -= edge_value
-                moves_score[u] -= 2 * edge_value
-            else:
-                objective_value['middle'] += edge_value
-                objective_value[group[u]] -= edge_value
-                moves_score[u] += 2 * edge_value
-            sorted_list.add((moves_score[u], u))
+    print(objective_value, 'sum :{s}'.format(s=-objective_value[0] + objective_value[1] - objective_value['middle']))
 
     variants = [set(), set()]
     for idx, is_true in group.items():
@@ -266,8 +304,9 @@ def local_search(merged_edges, threshold):
     return variants[0], variants[1]
 
 
-def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_variants, edges):
-    all_variants_pos = set([x for x in vcf_dict.values() if x <= max(incorrect_variants_pos)])
+def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_variants, edges, output_true_variants_set):
+    all_variants_pos = set([x for x in vcf_dict.values()])
+    output_true_variants_pos = set([vcf_dict[x] for x in output_true_variants_set])
     all_variants_pos_to_idx = {pos: idx for idx, pos in vcf_dict.items()}
 
     truth_pos = set()
@@ -282,8 +321,7 @@ def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_vari
                 continue
             genomic_pos = int(el[1])-1
             truth_pos.add(genomic_pos)
-    truth_pos = set([x for x in truth_pos if x <= max(incorrect_variants_pos)])
-    incorrect_intersect = incorrect_variants_pos.intersection(truth_pos)
+    truth_pos = set([x for x in truth_pos if x <= max(max(incorrect_variants_pos), max(output_true_variants_pos))])
     all_variants_intersect = all_variants_pos.intersection(truth_pos)
     statistics = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]]
     homo_counts = [[0, 0], [0, 0]]
@@ -298,33 +336,41 @@ def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_vari
         elif v in homo_variants[1]:
             homo_counts[is_v_truth][1] += 1
             continue
-        for u in merged_edges[v]:
-            pos_u = vcf_dict[u]
-            is_u_truth = pos_u in truth_pos
-            statistics[is_v_truth][is_u_truth][0] += merged_edges[v][u][0]
-            statistics[is_v_truth][is_u_truth][1] += merged_edges[v][u][1]
-            statistics_edges_by_vertex_type[is_v_truth][is_u_truth][0] += edges[v][u][0]
-            statistics_edges_by_vertex_type[is_v_truth][is_u_truth][1] += edges[v][u][1]
-            statistics_edges_by_vertex_type[is_v_truth][is_u_truth][2] += edges[v][u][2]
-            statistics_edges_by_vertex_type[is_v_truth][is_u_truth][3] += edges[v][u][3]
-            edges_by_vertex_type[is_v_truth][is_u_truth].append(edges[v][u])
-        edges_by_vertex_type[is_v_truth][0].append([-1, -1, -1, -1])
-        edges_by_vertex_type[is_v_truth][1].append([-1, -1, -1, -1])
+        # for u in merged_edges[v]:
+        #     pos_u = vcf_dict[u]
+        #     is_u_truth = pos_u in truth_pos
+        #     statistics[is_v_truth][is_u_truth][0] += merged_edges[v][u][0]
+        #     statistics[is_v_truth][is_u_truth][1] += merged_edges[v][u][1]
+        #     statistics_edges_by_vertex_type[is_v_truth][is_u_truth][0] += edges[v][u][0]
+        #     statistics_edges_by_vertex_type[is_v_truth][is_u_truth][1] += edges[v][u][1]
+        #     statistics_edges_by_vertex_type[is_v_truth][is_u_truth][2] += edges[v][u][2]
+        #     statistics_edges_by_vertex_type[is_v_truth][is_u_truth][3] += edges[v][u][3]
+        #     edges_by_vertex_type[is_v_truth][is_u_truth].append(edges[v][u])
+        # edges_by_vertex_type[is_v_truth][0].append([-1, -1, -1, -1])
+        # edges_by_vertex_type[is_v_truth][1].append([-1, -1, -1, -1])
 
 
-    for i in range(2):
-        for j in range(2):
-            with open('edges_by_vertex_type%d%d.txt' % (i,j), 'w') as file:
-                file.write(str(edges_by_vertex_type[i][j]))
-    print(statistics)
-    print(np.array(statistics_edges_by_vertex_type)/[[[len(e) for _ in range(4)] for e in v] for v in edges_by_vertex_type])
-    print(homo_counts)
+    # for i in range(2):
+    #     for j in range(2):
+    #         with open('edges_by_vertex_type%d%d.txt' % (i,j), 'w') as file:
+    #             file.write(str(edges_by_vertex_type[i][j]))
+    # print(statistics)
+    # print(np.array(statistics_edges_by_vertex_type)/[[[len(e) for _ in range(4)] for e in v] for v in edges_by_vertex_type])
+    # print(homo_counts)
 
-    for pos in incorrect_intersect:
-        v = all_variants_pos_to_idx[pos]
-        good_edges, bad_edges = 0, 0
-        for u in merged_edges[v]:
-            good_edges += merged_edges[v][u][0]
-            bad_edges += merged_edges[v][u][1]
-        # print(v, good_edges, bad_edges)
-    print(len(incorrect_intersect), len(all_variants_intersect), len(truth_pos), len(incorrect_variants_pos), len(all_variants_pos))
+    print('''\t
+          output_false in truth: {a} \t
+          output_truth in truth: {b} \t
+          output_homo in truth: {c} \t
+          truth size: {d} \t
+          output_false size: {e} \t
+          output_truth size: {f} \t
+          output_homo size: {g} \t'''.format(
+        a=len(incorrect_variants_pos.intersection(truth_pos)),
+        b=len(output_true_variants_pos.intersection(truth_pos)),
+        c=homo_counts[1][1],
+        d=len(truth_pos),
+        e=len(incorrect_variants_pos),
+        f=len(output_true_variants_pos),
+        g=len(homo_variants[1]))
+    )
