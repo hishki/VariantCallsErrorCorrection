@@ -6,11 +6,12 @@ ALL_VARIANTS_FILENAME = 'data/4.0.final_genotypes.vcf'
 LONGSHOT_OUTPUT_FILENAME = 'data/out.vcf'
 FRAGMENT_FILENAME = 'data/fragments.txt'
 EDGES_LIMIT = 1000
-GROUND_TRUTH_FILENAME = 'data/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf'
+GROUND_TRUTH_FILENAME = 'data/chr_20_HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf'
 MIN_HETERO_READS = 2
 LOCAL_SERACH_THRESHOLD = 1
-ITERATION_NUM = 50
+ITERATION_NUM = 5
 ITERATION_RANDOM_CHANGE = 10
+GREEDY_THRESHOLD_VALUE = -100
 
 vcf_dict, flist = read_fragment_matrix(FRAGMENT_FILENAME, ALL_VARIANTS_FILENAME, MAX_NUM_READS)
 vcf_dict, flist = keep_bed_intersect(vcf_dict, flist, INTERSECT_FILENAME)
@@ -25,8 +26,8 @@ merged_edges = merge_edge(edges)
 # with open('edges.txt', 'w') as file:
 #     file.write(str(edges))
 
-# incorrect_variants = greedy_algorithm(merged_edges.copy())
-incorrect_variants, output_true_variants_set = local_search(merged_edges.copy(), LOCAL_SERACH_THRESHOLD, ITERATION_NUM, ITERATION_RANDOM_CHANGE, None)
+# incorrect_variants, output_true_variants_set = greedy_algorithm(merged_edges.copy(), GREEDY_THRESHOLD_VALUE)
+incorrect_variants, output_true_variants_set = iterative_local_search(merged_edges.copy(), LOCAL_SERACH_THRESHOLD, ITERATION_NUM, ITERATION_RANDOM_CHANGE, None)
 incorrect_variants_pos = set()
 for idx in incorrect_variants:
     incorrect_variants_pos.add(vcf_dict[idx])

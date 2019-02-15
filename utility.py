@@ -2,11 +2,10 @@ import numpy as np
 from sortedcontainers import SortedList
 
 
-def read_fragment_matrix(frag_matrix, vcf_file, max_num_reads):
-
+def read_vcf_file(filename):
     snp_ix = 0
     vcf_dict = dict()
-    with open(vcf_file,'r') as infile:
+    with open(filename, 'r') as infile:
         for line in infile:
             if line[:1] == '#':
                 continue
@@ -14,10 +13,14 @@ def read_fragment_matrix(frag_matrix, vcf_file, max_num_reads):
             if len(el) < 5:
                 continue
 
-            genomic_pos = int(el[1])-1
+            genomic_pos = int(el[1]) - 1
             vcf_dict[snp_ix] = genomic_pos
             snp_ix += 1
+    return vcf_dict
 
+
+def read_fragment_matrix(frag_matrix, vcf_file, max_num_reads):
+    vcf_dict = read_vcf_file(vcf_file)
     flist = []
 
     with open(frag_matrix,"r") as fm:
@@ -174,12 +177,13 @@ def merge_edge(edges):
             t = edges[v][u]
             # t.sort()
             # merged_edges[v][u] = (t[0]+t[1], t[2]+t[3])
-            merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3]))
+            merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3])*2)
     return merged_edges
 
 
-def greedy_algorithm(merged_edges):
+def greedy_algorithm(merged_edges, limit_threshold):
     incorrect_variants = set()
+    correct_variants = set()
     variant_set = set()
     variant_score = {}
     for v in merged_edges:
@@ -194,7 +198,7 @@ def greedy_algorithm(merged_edges):
         v = min(variant_set)
         variant_set.remove(v)
         # print(v, len(variant_set))
-        if v[0] < -100:
+        if v[0] < limit_threshold:
             incorrect_variants.add(v[1])
             for u in merged_edges[v[1]]:
                 variant_set.remove((variant_score[u], u))
@@ -202,15 +206,14 @@ def greedy_algorithm(merged_edges):
                 variant_set.add((variant_score[u], u))
                 merged_edges[u].pop(v[1])
         else:
-            break
+            correct_variants.add(v[1])
 
-    return incorrect_variants
+    return incorrect_variants, correct_variants
 
 
-def local_search(merged_edges, threshold, iteration_num, random_change, init_false_group_set):
+def iterative_local_search(merged_edges, threshold, iteration_num, random_change_factor, init_false_group_set):
     group = {}  # [idx] = 0 -> error, 1 -> True
     group_size = [0, 0]
-    moves_score = {}  # [idx] = -move_score
     # initialized
     for v in merged_edges:
         edge_score = 0
@@ -223,64 +226,67 @@ def local_search(merged_edges, threshold, iteration_num, random_change, init_fal
             # group[v] = np.random.randint(2)
         group_size[group[v]] += 1
 
+    objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
+    # local_search
     for i in range(iteration_num):
-        objective_value = {0: 0, 1: 0, 'middle': 0}
-        sorted_list = SortedList()  # (move_score, idx)
-        for v in merged_edges:
-            if np.random.randint(random_change) == 0:
-                group_size[group[v]] -= 1
-                group[v] = 1-group[v]
-                group_size[group[v]] += 1
-        for v in merged_edges:
-            move_score = 0
-            for u in merged_edges[v]:
-                edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
-                if group[v] == group[u]:
-                    objective_value[group[v]] += edge_value
-                else:
-                    objective_value['middle'] += edge_value
-                if group[v] == 0 and group[u] == 1:
-                    move_score += 2 * edge_value
-                elif group[v] == 1 and group[u] == 1:
-                    move_score -= 2 * edge_value
-            moves_score[v] = move_score
-            sorted_list.add((move_score, v))
+        print('Iteration #{i}'.format(i=i))
+        random_group_change(merged_edges, group, group_size, random_change_factor)
+        objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
+        local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges)
+        get_objective_value(group, merged_edges, group_size)
 
-        objective_value[0] /= 2
-        objective_value[1] /= 2
-        objective_value['middle'] /= 2
+    get_objective_value(group, merged_edges, group_size)
 
-        # local_search
-        while True:
-            print(objective_value, 'sum :{s}'.format(s=-objective_value[0] + objective_value[1] - objective_value['middle']), group_size)
-            move_score, v = sorted_list.pop(-1)
-            print(move_score, v)
-            if move_score < threshold:
-                break
+    variants = [set(), set()]
+    for idx, is_true in group.items():
+        variants[is_true].add(idx)
+    return variants[0], variants[1]
+
+
+# will mutate arguments
+def random_group_change(merged_edges, group, group_size, random_change_factor):
+    for v in merged_edges:
+        if np.random.randint(random_change_factor) == 0:
             group_size[group[v]] -= 1
-            group[v] = 1-group[v]
+            group[v] = 1 - group[v]
             group_size[group[v]] += 1
-            moves_score[v] = -move_score
-            sorted_list.add((moves_score[v], v))
-            for u in merged_edges[v]:
-                edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
-                sorted_list.remove((moves_score[u], u))
-                if group[v] == group[u]:
-                    objective_value[group[v]] += edge_value
-                    objective_value['middle'] -= edge_value
-                    moves_score[u] -= 2 * edge_value
-                else:
-                    objective_value['middle'] += edge_value
-                    objective_value[group[u]] -= edge_value
-                    moves_score[u] += 2 * edge_value
-                sorted_list.add((moves_score[u], u))
+    return group, group_size
 
+
+# will mutate arguments
+def local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges):
+    while True:
+        move_score, v = sorted_list.pop(-1)
+        if move_score < threshold:
+            break
+        group_size[group[v]] -= 1
+        group[v] = 1 - group[v]
+        group_size[group[v]] += 1
+        moves_score[v] = -move_score
+        sorted_list.add((moves_score[v], v))
+        for u in merged_edges[v]:
+            edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
+            sorted_list.remove((moves_score[u], u))
+            if group[v] == group[u]:
+                objective_value[group[v]] += edge_value
+                objective_value['middle'] -= edge_value
+                moves_score[u] -= 2 * edge_value
+            else:
+                objective_value['middle'] += edge_value
+                objective_value[group[u]] -= edge_value
+                moves_score[u] += 2 * edge_value
+            sorted_list.add((moves_score[u], u))
+
+
+def get_objective_value(group, merged_edges, group_size):
     objective_value = {0: 0, 1: 0, 'middle': 0}
     sorted_list = SortedList()  # (move_score, idx)
+    moves_score = {}  # [idx] = -move_score
     for v in merged_edges:
         move_score = 0
         for u in merged_edges[v]:
             edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
+            edge_value = merged_edges[u][v][0] - merged_edges[u][v][1]
             if group[v] == group[u]:
                 objective_value[group[v]] += edge_value
             else:
@@ -292,19 +298,27 @@ def local_search(merged_edges, threshold, iteration_num, random_change, init_fal
         moves_score[v] = move_score
         sorted_list.add((move_score, v))
 
-    print(sorted_list.pop(-1))
     objective_value[0] /= 2
     objective_value[1] /= 2
     objective_value['middle'] /= 2
-    print(objective_value, 'sum :{s}'.format(s=-objective_value[0] + objective_value[1] - objective_value['middle']))
+    print('highest move score(score, vertex): {s}'.format(s=sorted_list[-1]))
+    print('group size: {s}'.format(s=group_size))
+    print('objective_val: {o}, sum: {s}'.format(o=objective_value, s=-objective_value[0] + objective_value[1] - objective_value['middle']))
+    return objective_value, moves_score, sorted_list
 
-    variants = [set(), set()]
-    for idx, is_true in group.items():
-        variants[is_true].add(idx)
-    return variants[0], variants[1]
+
+def get_truth_objective_value(truth_pos, vcf_dict, merged_edges):
+    group_size = [0, 0]
+    group = {}
+    for v in merged_edges.keys():
+        group[v] = vcf_dict[v] in truth_pos
+        group_size[group[v]] += 1
+    get_objective_value(group, merged_edges, group_size)
+    return group, group_size
 
 
 def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_variants, edges, output_true_variants_set):
+    print('accuracy:')
     all_variants_pos = set([x for x in vcf_dict.values()])
     output_true_variants_pos = set([vcf_dict[x] for x in output_true_variants_set])
     all_variants_pos_to_idx = {pos: idx for idx, pos in vcf_dict.items()}
@@ -319,9 +333,12 @@ def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_vari
                 continue
             if el[0] != 'chr20':
                 continue
+            if el[-1][2] == el[-1][0]:
+                continue
             genomic_pos = int(el[1])-1
             truth_pos.add(genomic_pos)
     truth_pos = set([x for x in truth_pos if x <= max(max(incorrect_variants_pos), max(output_true_variants_pos))])
+    get_truth_objective_value(truth_pos, vcf_dict, merged_edges)
     all_variants_intersect = all_variants_pos.intersection(truth_pos)
     statistics = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]]
     homo_counts = [[0, 0], [0, 0]]
