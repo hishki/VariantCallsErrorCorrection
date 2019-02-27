@@ -1,5 +1,8 @@
 import numpy as np
 from sortedcontainers import SortedList
+import scipy.stats as scstat
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
 def read_vcf_file(filename):
@@ -177,7 +180,9 @@ def merge_edge(edges):
             t = edges[v][u]
             # t.sort()
             # merged_edges[v][u] = (t[0]+t[1], t[2]+t[3])
-            merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3])*2)
+            # merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3])*2)
+            if sum(t) >= 4:
+                merged_edges[v][u] = -np.log(scstat.fisher_exact([[t[0], t[1]], [t[2], t[3]]])[-1]) + np.log(.05)
     return merged_edges
 
 
@@ -218,7 +223,7 @@ def iterative_local_search(merged_edges, threshold, iteration_num, random_change
     for v in merged_edges:
         edge_score = 0
         for u in merged_edges[v]:
-            edge_score += merged_edges[v][u][0] - merged_edges[v][u][1]
+            edge_score += merged_edges[v][u]
         if init_false_group_set is not None:
             group[v] = v not in init_false_group_set
         else:
@@ -229,7 +234,7 @@ def iterative_local_search(merged_edges, threshold, iteration_num, random_change
     objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
     # local_search
     for i in range(iteration_num):
-        print('Iteration #{i}'.format(i=i))
+        print('\n\n*******Iteration #{i}*********'.format(i=i))
         random_group_change(merged_edges, group, group_size, random_change_factor)
         objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
         local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges)
@@ -265,7 +270,7 @@ def local_search_step(objective_value, sorted_list, moves_score, group_size, thr
         moves_score[v] = -move_score
         sorted_list.add((moves_score[v], v))
         for u in merged_edges[v]:
-            edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
+            edge_value = merged_edges[v][u]
             sorted_list.remove((moves_score[u], u))
             if group[v] == group[u]:
                 objective_value[group[v]] += edge_value
@@ -285,8 +290,7 @@ def get_objective_value(group, merged_edges, group_size):
     for v in merged_edges:
         move_score = 0
         for u in merged_edges[v]:
-            edge_value = merged_edges[v][u][0] - merged_edges[v][u][1]
-            edge_value = merged_edges[u][v][0] - merged_edges[u][v][1]
+            edge_value = merged_edges[v][u]
             if group[v] == group[u]:
                 objective_value[group[v]] += edge_value
             else:
@@ -307,12 +311,30 @@ def get_objective_value(group, merged_edges, group_size):
     return objective_value, moves_score, sorted_list
 
 
+def draw_histogram(group, merged_edges):
+    edges_by_group = {0: [], 1: [], 'middle': []}
+    for v in merged_edges:
+        for u in merged_edges[v]:
+            edge_value = merged_edges[v][u]
+            if group[v] == group[u]:
+                edges_by_group[group[v]].append(edge_value)
+            else:
+                edges_by_group['middle'].append(edge_value)
+    sns.distplot(edges_by_group[0])
+    plt.show()
+    sns.distplot(edges_by_group[1])
+    plt.show()
+    sns.distplot(edges_by_group['middle'])
+    plt.show()
+
+
 def get_truth_objective_value(truth_pos, vcf_dict, merged_edges):
     group_size = [0, 0]
     group = {}
     for v in merged_edges.keys():
         group[v] = vcf_dict[v] in truth_pos
         group_size[group[v]] += 1
+    draw_histogram(group, merged_edges)
     get_objective_value(group, merged_edges, group_size)
     return group, group_size
 
