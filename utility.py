@@ -181,7 +181,7 @@ def merge_edge(edges):
             # t.sort()
             # merged_edges[v][u] = (t[0]+t[1], t[2]+t[3])
             # merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3])*2)
-            if sum(t) >= 4:
+            if sum(t) >= 5:
                 merged_edges[v][u] = -np.log(scstat.fisher_exact([[t[0], t[1]], [t[2], t[3]]])[-1]) + np.log(.05)
     return merged_edges
 
@@ -216,7 +216,7 @@ def greedy_algorithm(merged_edges, limit_threshold):
     return incorrect_variants, correct_variants
 
 
-def iterative_local_search(merged_edges, threshold, iteration_num, random_change_factor, init_false_group_set):
+def iterative_local_search(merged_edges, threshold, iteration_num, random_change_factor, random_swap_factor, init_false_group_set):
     group = {}  # [idx] = 0 -> error, 1 -> True
     group_size = [0, 0]
     # initialized
@@ -236,6 +236,7 @@ def iterative_local_search(merged_edges, threshold, iteration_num, random_change
     for i in range(iteration_num):
         print('\n\n*******Iteration #{i}*********'.format(i=i))
         random_group_change(merged_edges, group, group_size, random_change_factor)
+        random_group_swap(group, group_size, random_swap_factor)
         objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
         local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges)
         get_objective_value(group, merged_edges, group_size)
@@ -251,12 +252,20 @@ def iterative_local_search(merged_edges, threshold, iteration_num, random_change
 # will mutate arguments
 def random_group_change(merged_edges, group, group_size, random_change_factor):
     for v in merged_edges:
-        if np.random.randint(random_change_factor) == 0:
+        if np.random.random_sample() < random_change_factor:
             group_size[group[v]] -= 1
             group[v] = 1 - group[v]
             group_size[group[v]] += 1
     return group, group_size
 
+
+def random_group_swap(group, group_size, random_swap_factor):
+    swap_size = int(min(group_size) * random_swap_factor) + 1
+    swap_idx = np.random.choice(group_size[0], swap_size), np.random.choice(group_size[1], swap_size)
+    for i in range(swap_size):
+        v, u = swap_idx[0][i], swap_idx[1][i]
+        group[v] = 1 - group[v]
+        group[u] = 1 - group[u]
 
 # will mutate arguments
 def local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges):
@@ -359,7 +368,7 @@ def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_vari
                 continue
             genomic_pos = int(el[1])-1
             truth_pos.add(genomic_pos)
-    truth_pos = set([x for x in truth_pos if x <= max(max(incorrect_variants_pos), max(output_true_variants_pos))])
+    truth_pos = set([x for x in truth_pos if x <= max(incorrect_variants_pos.union(output_true_variants_pos).union(homo_variants[0]).union(homo_variants[1]))])
     get_truth_objective_value(truth_pos, vcf_dict, merged_edges)
     all_variants_intersect = all_variants_pos.intersection(truth_pos)
     statistics = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]]
@@ -373,6 +382,8 @@ def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_vari
             homo_counts[is_v_truth][0] += 1
             continue
         elif v in homo_variants[1]:
+            if is_v_truth is False:
+                print(pos_v)
             homo_counts[is_v_truth][1] += 1
             continue
         # for u in merged_edges[v]:
