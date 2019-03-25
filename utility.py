@@ -1,11 +1,11 @@
 import numpy as np
 from sortedcontainers import SortedList
-import scipy.stats as scstat
 import seaborn as sns
 import matplotlib.pyplot as plt
+from stats import get_barnard, get_fisher
 
 
-def read_vcf_file(filename):
+def read_vcf_file(filename, chr_list=None, return_homo=True, return_hetero=True, from_pos=-1, to_pos=-1):
     snp_ix = 0
     vcf_dict = dict()
     with open(filename, 'r') as infile:
@@ -15,15 +15,30 @@ def read_vcf_file(filename):
             el = line.strip().split('\t')
             if len(el) < 5:
                 continue
-
+            if (chr_list is not None) and (el[0] not in chr_list):
+                continue
+            if (not return_homo) and el[-1][2] == el[-1][0]:
+                continue
+            if (not return_hetero) and el[-1][2] != el[-1][0]:
+                continue
             genomic_pos = int(el[1]) - 1
+            if to_pos != -1 and genomic_pos > to_pos:
+                break
+            if from_pos != -1 and genomic_pos < from_pos:
+                continue
             vcf_dict[snp_ix] = genomic_pos
             snp_ix += 1
     return vcf_dict
 
 
-def read_fragment_matrix(frag_matrix, vcf_file, max_num_reads):
-    vcf_dict = read_vcf_file(vcf_file)
+def dict_to_set(d):
+    return set(d.values())
+
+
+def read_fragment_matrix(frag_matrix, vcf_file, max_num_reads, from_pos, to_pos):
+    vcf_dict = read_vcf_file(vcf_file, from_pos=from_pos, to_pos=to_pos)
+    min_var_idx = min(vcf_dict.keys())
+    max_var_idx = max(vcf_dict.keys())
     flist = []
 
     with open(frag_matrix,"r") as fm:
@@ -60,13 +75,14 @@ def read_fragment_matrix(frag_matrix, vcf_file, max_num_reads):
                 cnt_quality[x] += 1
             qlist = [10**((ord(q) - 33) * -0.1) for q in qlist]
             alist = [(a,b,c) for ((a,b),c) in zip(call_list2,qlist)]
+            alist = list(filter(lambda e: max_var_idx >= e[0] >= min_var_idx, alist))
             flist.append(alist)
     # print(cnt_quality)
     # print(flist[-1])
     return vcf_dict, flist
 
 
-def keep_bed_intersect(vcf_dict, flist, intersect_file):
+def keep_bed_intersect(vcf_dict, flist, intersect_file, from_pos, to_pos):
     intersect_pos = set()
     snp_ix = 0
     intersect_dict = dict()
@@ -97,19 +113,8 @@ def keep_bed_intersect(vcf_dict, flist, intersect_file):
     return intersect_dict, new_flist
 
 
-def keep_output_intersect(vcf_dict, flist, out_file):
-    intersect_pos = set()
-    snp_ix = 0
-    with open(out_file, 'r') as infile:
-        for line in infile:
-            if line[:1] == '#':
-                continue
-            el = line.strip().split('\t')
-            if len(el) < 5:
-                continue
-            genomic_pos = int(el[1])-1
-            intersect_pos.add(genomic_pos)
-            snp_ix += 1
+def keep_output_intersect(vcf_dict, flist, out_file, from_pos, to_pos):
+    intersect_pos = dict_to_set(read_vcf_file(out_file, from_pos=from_pos, to_pos=to_pos))
 
     new_flist = []
     res_vcf_dict = {}
@@ -160,7 +165,7 @@ def get_variant_count(flist):
     return variant_count
 
 
-def vertex_filter(variant_count, min_hetero_reads):
+def vertex_filter(vcf_dict, variant_count, min_hetero_reads):
     filtered_v = set()
     homo_variants = [set(), set()]
     for snp_idx, snp_count in variant_count.items():
@@ -168,21 +173,35 @@ def vertex_filter(variant_count, min_hetero_reads):
             filtered_v.add(snp_idx)
         else:
             is_variant = snp_count[1] > snp_count[0]
-            homo_variants[is_variant].add(snp_idx)
+            homo_variants[is_variant].add(vcf_dict[snp_idx])
     return homo_variants, filtered_v
 
 
-def merge_edge(edges):
+def merge_edge(edges, method, min_sum_edges, significance_threshold):
+    print("Building edges for  {} vertexes".format(len(edges)))
     merged_edges = {}
-    for v in edges:
+    if method == 'barnard':
+        f = get_barnard
+    else:
+        f = get_fisher
+    for i, v in enumerate(edges):
+        interval = int(len(edges) / 10)
+        if i % interval == 0:
+            frac = int(i / interval) * 10
+            print("{}%...".format(frac))
+
         merged_edges[v] = {}
         for u in edges[v]:
             t = edges[v][u]
             # t.sort()
             # merged_edges[v][u] = (t[0]+t[1], t[2]+t[3])
             # merged_edges[v][u] = (t[0]*t[3] + t[1]*t[2], (t[0]*t[1] + t[2]*t[3] + t[0]*t[2] + t[1]*t[3])*2)
-            if sum(t) >= 5:
-                merged_edges[v][u] = -np.log(scstat.fisher_exact([[t[0], t[1]], [t[2], t[3]]])[-1]) + np.log(.05)
+            # print(t)
+            if sum(t) >= min_sum_edges:
+                merged_edges[v][u] = -np.log(f(*t) + 0.000001) + np.log(significance_threshold)
+                # merged_edges[v][u] = -np.log(barnard_test(*t)[0]+0.000001) + np.log(.01)
+                # if merged_edges[v][u] < 0:
+                #     print(v, u, t, -np.log(scstat.fisher_exact([[t[0], t[1]], [t[2], t[3]]])[-1]), + np.log(.10), -np.log(barnard_test(*t)[0]))
     return merged_edges
 
 
@@ -216,9 +235,32 @@ def greedy_algorithm(merged_edges, limit_threshold):
     return incorrect_variants, correct_variants
 
 
-def iterative_local_search(merged_edges, threshold, iteration_num, random_change_factor, random_swap_factor, init_false_group_set):
+# return variants pos
+def iterative_local_search(vcf_dict, merged_edges, threshold, iteration_num, random_change_factor, random_swap_factor, init_false_group_set):
+
+    group, group_size, group_set = init_local_search(merged_edges, init_false_group_set)
+    objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
+    # local_search
+    for i in range(iteration_num):
+        print('\n\n*******Iteration #{i}*********'.format(i=i))
+        random_group_change(merged_edges, group, group_set, group_size, random_change_factor)
+        random_group_swap(group, group_set, group_size, random_swap_factor)
+        objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
+        local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges, group_set)
+        get_objective_value(group, merged_edges, group_size)
+
+    get_objective_value(group, merged_edges, group_size)
+
+    variants = [set(), set()]
+    for idx, is_true in group.items():
+        variants[is_true].add(vcf_dict[idx])
+    return variants[0], variants[1]
+
+
+def init_local_search(merged_edges, init_false_group_set):
     group = {}  # [idx] = 0 -> error, 1 -> True
     group_size = [0, 0]
+    group_set = (SortedList(), SortedList())
     # initialized
     for v in merged_edges:
         edge_score = 0
@@ -229,53 +271,45 @@ def iterative_local_search(merged_edges, threshold, iteration_num, random_change
         else:
             group[v] = int(edge_score > 0)
             # group[v] = np.random.randint(2)
+        group_set[group[v]].add(v)
         group_size[group[v]] += 1
-
-    objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
-    # local_search
-    for i in range(iteration_num):
-        print('\n\n*******Iteration #{i}*********'.format(i=i))
-        random_group_change(merged_edges, group, group_size, random_change_factor)
-        random_group_swap(group, group_size, random_swap_factor)
-        objective_value, moves_score, sorted_list = get_objective_value(group, merged_edges, group_size)
-        local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges)
-        get_objective_value(group, merged_edges, group_size)
-
-    get_objective_value(group, merged_edges, group_size)
-
-    variants = [set(), set()]
-    for idx, is_true in group.items():
-        variants[is_true].add(idx)
-    return variants[0], variants[1]
+    return group, group_size, group_set
 
 
 # will mutate arguments
-def random_group_change(merged_edges, group, group_size, random_change_factor):
+def random_group_change(merged_edges, group, group_set, group_size, random_change_factor):
     for v in merged_edges:
         if np.random.random_sample() < random_change_factor:
-            group_size[group[v]] -= 1
-            group[v] = 1 - group[v]
-            group_size[group[v]] += 1
+            change_vertex_group(v, group, group_set, group_size)
     return group, group_size
 
 
-def random_group_swap(group, group_size, random_swap_factor):
+def random_group_swap(group, group_set, group_size, random_swap_factor):
+    if min(group_size) == 0:
+        return
     swap_size = int(min(group_size) * random_swap_factor) + 1
     swap_idx = np.random.choice(group_size[0], swap_size), np.random.choice(group_size[1], swap_size)
     for i in range(swap_size):
-        v, u = swap_idx[0][i], swap_idx[1][i]
-        group[v] = 1 - group[v]
-        group[u] = 1 - group[u]
+        v, u = group_set[0][swap_idx[0][i]], group_set[1][swap_idx[1][i]]
+        change_vertex_group(v, group, group_set, group_size)
+        change_vertex_group(u, group, group_set, group_size)
+
+
+def change_vertex_group(v, group, group_set, group_size):
+    group_size[group[v]] -= 1
+    group_set[group[v]].remove(v)
+    group[v] = 1 - group[v]
+    group_size[group[v]] += 1
+    group_set[group[v]].add(v)
+
 
 # will mutate arguments
-def local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges):
+def local_search_step(objective_value, sorted_list, moves_score, group_size, threshold, group, merged_edges, group_set):
     while True:
         move_score, v = sorted_list.pop(-1)
         if move_score < threshold:
             break
-        group_size[group[v]] -= 1
-        group[v] = 1 - group[v]
-        group_size[group[v]] += 1
+        change_vertex_group(v, group, group_set, group_size)
         moves_score[v] = -move_score
         sorted_list.add((moves_score[v], v))
         for u in merged_edges[v]:
@@ -348,79 +382,28 @@ def get_truth_objective_value(truth_pos, vcf_dict, merged_edges):
     return group, group_size
 
 
-def accuracy(vcf_file, vcf_dict, incorrect_variants_pos, merged_edges, homo_variants, edges, output_true_variants_set):
+def accuracy(merged_edges, output_variants_pos, homo_variants_pos, known_pos, hetero_truth_pos, homo_truth_pos, vcf_dict):
     print('accuracy:')
-    all_variants_pos = set([x for x in vcf_dict.values()])
-    output_true_variants_pos = set([vcf_dict[x] for x in output_true_variants_set])
-    all_variants_pos_to_idx = {pos: idx for idx, pos in vcf_dict.items()}
 
-    truth_pos = set()
-    with open(vcf_file,'r') as infile:
-        for line in infile:
-            if line[:1] == '#':
-                continue
-            el = line.strip().split('\t')
-            if len(el) < 5:
-                continue
-            if el[0] != 'chr20':
-                continue
-            if el[-1][2] == el[-1][0]:
-                continue
-            genomic_pos = int(el[1])-1
-            truth_pos.add(genomic_pos)
-    truth_pos = set([x for x in truth_pos if x <= max(incorrect_variants_pos.union(output_true_variants_pos).union(homo_variants[0]).union(homo_variants[1]))])
-    get_truth_objective_value(truth_pos, vcf_dict, merged_edges)
-    all_variants_intersect = all_variants_pos.intersection(truth_pos)
-    statistics = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]]
-    homo_counts = [[0, 0], [0, 0]]
-    edges_by_vertex_type =  [[[], []], [[], []]]
-    statistics_edges_by_vertex_type = [[[0, 0, 0, 0], [0, 0, 0, 0]], [[0, 0, 0, 0], [0, 0, 0, 0]]]
-    for pos_v in all_variants_pos:
-        v = all_variants_pos_to_idx[pos_v]
-        is_v_truth = pos_v in truth_pos
-        if v in homo_variants[0]:
-            homo_counts[is_v_truth][0] += 1
-            continue
-        elif v in homo_variants[1]:
-            if is_v_truth is False:
-                print(pos_v)
-            homo_counts[is_v_truth][1] += 1
-            continue
-        # for u in merged_edges[v]:
-        #     pos_u = vcf_dict[u]
-        #     is_u_truth = pos_u in truth_pos
-        #     statistics[is_v_truth][is_u_truth][0] += merged_edges[v][u][0]
-        #     statistics[is_v_truth][is_u_truth][1] += merged_edges[v][u][1]
-        #     statistics_edges_by_vertex_type[is_v_truth][is_u_truth][0] += edges[v][u][0]
-        #     statistics_edges_by_vertex_type[is_v_truth][is_u_truth][1] += edges[v][u][1]
-        #     statistics_edges_by_vertex_type[is_v_truth][is_u_truth][2] += edges[v][u][2]
-        #     statistics_edges_by_vertex_type[is_v_truth][is_u_truth][3] += edges[v][u][3]
-        #     edges_by_vertex_type[is_v_truth][is_u_truth].append(edges[v][u])
-        # edges_by_vertex_type[is_v_truth][0].append([-1, -1, -1, -1])
-        # edges_by_vertex_type[is_v_truth][1].append([-1, -1, -1, -1])
-
-
-    # for i in range(2):
-    #     for j in range(2):
-    #         with open('edges_by_vertex_type%d%d.txt' % (i,j), 'w') as file:
-    #             file.write(str(edges_by_vertex_type[i][j]))
-    # print(statistics)
-    # print(np.array(statistics_edges_by_vertex_type)/[[[len(e) for _ in range(4)] for e in v] for v in edges_by_vertex_type])
-    # print(homo_counts)
-
+    get_truth_objective_value(hetero_truth_pos, vcf_dict, merged_edges)
     print('''\t
-          output_false in truth: {a} \t
-          output_truth in truth: {b} \t
-          output_homo in truth: {c} \t
-          truth size: {d} \t
-          output_false size: {e} \t
-          output_truth size: {f} \t
-          output_homo size: {g} \t'''.format(
-        a=len(incorrect_variants_pos.intersection(truth_pos)),
-        b=len(output_true_variants_pos.intersection(truth_pos)),
-        c=homo_counts[1][1],
-        d=len(truth_pos),
-        e=len(incorrect_variants_pos),
-        f=len(output_true_variants_pos),
-        g=len(homo_variants[1]))
+          output_hetero_false in real hetero truth: {} \t output_hetero_false(known) in real hetero truth: {} \t
+          output_hetero_truth in real hetero truth: {} \t output_hetero_truth(known) in real hetero truth: {} \t
+          output_homo_truth in real homo truth: {} \t
+          real homo truth size: {} \t 
+          real hetero truth size: {} \t
+          output_false size: {} \t
+          output_truth size: {} \t
+          output_homo size: 0:{} 1:{}\t'''.format(
+        len(output_variants_pos[0].intersection(hetero_truth_pos)),
+        len(output_variants_pos[0].intersection(hetero_truth_pos).intersection(known_pos)),
+        len(output_variants_pos[1].intersection(hetero_truth_pos)),
+        len(output_variants_pos[1].intersection(hetero_truth_pos).intersection(known_pos)),
+        len(homo_variants_pos[0].union(homo_variants_pos[1]).intersection(homo_truth_pos)),
+        len(homo_truth_pos),
+        len(hetero_truth_pos),
+        len(output_variants_pos[0]),
+        len(output_variants_pos[1]),
+        len(homo_variants_pos[0]), len(homo_variants_pos[1])
+        )
     )

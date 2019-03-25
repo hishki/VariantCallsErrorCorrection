@@ -1,0 +1,65 @@
+8, 3, 0.05, bernard
+output_false in truth: 193
+output_truth in truth: 1095
+output_homo in truth: 87
+truth size: 2475
+output_false size: 1498
+output_truth size: 3914
+output_homo size: 1500
+
+
+5, 3, 0.05, bernard
+output_false in truth: 281
+output_truth in truth: 1007
+output_homo in truth: 87
+truth size: 2475
+output_false size: 2196
+output_truth size: 3216
+output_homo size: 1500
+
+
+output_false in truth: 288
+output_truth in truth: 1018
+output_homo in truth: 91
+truth size: 2475
+output_false size: 2618
+output_truth size: 3904
+output_homo size: 1982
+
+
+5, 3, 0.01, bernard
+output_false in truth: 624
+output_truth in truth: 664
+output_homo in truth: 87
+truth size: 2475
+output_false size: 3967
+output_truth size: 1445
+output_homo size: 1500
+
+5, 3, 0.10, without intersect filter, bernard
+output_false in truth: 128
+output_truth in truth: 1178
+output_homo in truth: 91
+truth size: 2475
+output_false size: 1154
+output_truth size: 5368
+output_homo size: 1982
+
+
+5, 3, 0.15, without intersect filter, fisher
+output_false in truth: 360
+output_truth in truth: 946
+output_homo in truth: 91
+truth size: 2475
+output_false size: 2855
+output_truth size: 3667
+output_homo size: 1982
+
+5, 3, 0.10, without intersect filter, fisher
+output_false in truth: 415
+output_truth in truth: 891
+output_homo in truth: 91
+truth size: 2475
+output_false size: 3524
+output_truth size: 2998
+output_homo size: 1982
